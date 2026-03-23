@@ -6,13 +6,6 @@ Hệ thống demo: client gọi **Go API** để đưa job vào **Kafka**, **Go 
 
 ![Kiến trúc hệ thống](docs/architecture.svg)
 
-Nguồn sơ đồ (Mermaid): [`docs/architecture.mmd`](docs/architecture.mmd). Sau khi sửa `.mmd`, tạo lại [`docs/architecture.svg`](docs/architecture.svg) (Docker):
-
-```bash
-docker run --rm -v "$(pwd)/docs:/data" minlag/mermaid-cli:11.4.0 \
-  -i /data/architecture.mmd -o /data/architecture.svg -b transparent
-```
-
 Luồng tóm tắt:
 
 1. Client gửi `POST /v1/jobs` tới **go-api** → message JSON ghi vào topic **`ai.jobs`** (header `x-retry-count`).

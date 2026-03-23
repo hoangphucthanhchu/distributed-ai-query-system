@@ -36,6 +36,3 @@ build/
 
 # Logs
 *.log
-
-# Generated from docs/architecture.mmd (mermaid-cli; see README)
-docs/architecture.svg

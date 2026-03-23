@@ -4,40 +4,9 @@ Hệ thống demo: client gọi **Go API** để đưa job vào **Kafka**, **Go 
 
 ## Kiến trúc
 
-```mermaid
-flowchart TB
-  subgraph clients["Clients"]
-    C["HTTP client"]
-  end
+![Kiến trúc hệ thống](docs/architecture.svg)
 
-  subgraph goapi["go-api"]
-    API["REST: POST /v1/jobs, GET /healthz"]
-  end
-
-  subgraph kafka["Kafka"]
-    J["ai.jobs"]
-    R["ai.jobs.retry"]
-    D["ai.jobs.dlq"]
-  end
-
-  subgraph gocon["go-consumer"]
-    W["Consumer group: ai-workers"]
-  end
-
-  subgraph pyai["python-ai"]
-    P["POST /v1/process"]
-  end
-
-  C -->|enqueue job| API
-  API -->|produce| J
-  J --> W
-  R --> W
-  W -->|invoke| P
-  W -->|lỗi, còn retry| R
-  W -->|hết retry / poison| D
-```
-
-Nguồn sơ đồ (Mermaid) trong repo: [`docs/architecture.mmd`](docs/architecture.mmd) — khi đổi sơ đồ, cập nhật cả khối trên và file `.mmd` cho đồng bộ. File `docs/architecture.svg` không nằm trong git (artifact); xuất SVG cục bộ (Docker):
+Nguồn sơ đồ (Mermaid): [`docs/architecture.mmd`](docs/architecture.mmd). Sau khi sửa `.mmd`, tạo lại [`docs/architecture.svg`](docs/architecture.svg) (Docker):
 
 ```bash
 docker run --rm -v "$(pwd)/docs:/data" minlag/mermaid-cli:11.4.0 \
@@ -134,5 +103,5 @@ Binary: `bin/api`, `bin/consumer`. Khi chạy ngoài Docker, đặt `KAFKA_BROKE
 - `go-api/` — HTTP API + Kafka producer  
 - `go-consumer/` — Kafka consumer + retry/DLQ  
 - `python-ai/` — FastAPI stub  
-- `docs/` — sơ đồ kiến trúc (`architecture.mmd`; `architecture.svg` tạo cục bộ nếu cần)  
+- `docs/` — sơ đồ kiến trúc (`architecture.mmd`, `architecture.svg`)  
 - `docker-compose.yml` — orchestration  

@@ -1,6 +1,6 @@
 services:
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7
     hostname: kafka
     ports:
       - "9094:9094"
@@ -20,7 +20,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1",
+          "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1",
         ]
       interval: 5s
       timeout: 10s
@@ -28,7 +28,8 @@ services:
       start_period: 30s
 
   kafka-init:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7
+    restart: "no"
     depends_on:
       kafka:
         condition: service_healthy
@@ -40,6 +41,23 @@ services:
         kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic ai.jobs.retry --partitions 3 --replication-factor 1
         kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic ai.jobs.dlq --partitions 1 --replication-factor 1
         echo "Topics ready."
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
 
   python-ai:
     build:
@@ -61,6 +79,9 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build:
@@ -70,11 +91,14 @@ services:
       HTTP_ADDR: ":8080"
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC_JOBS: ai.jobs
+      DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
     ports:
       - "8080:8080"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
 
   consumer:
     build:
@@ -89,11 +113,15 @@ services:
       MAX_RETRIES: "5"
       RETRY_BACKOFF_MS: "2000"
       AI_SERVICE_URL: http://python-ai:8000
+      DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       python-ai:
         condition: service_healthy
 
 volumes:
   kafka_data: {}
+  pg_data: {}

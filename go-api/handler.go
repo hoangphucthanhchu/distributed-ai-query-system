@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"mime"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -19,10 +22,50 @@ type JobPayload struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func registerHandlers(mux *http.ServeMux, writer *kafka.Writer) {
+func registerHandlers(mux *http.ServeMux, writer *kafka.Writer, pool *pgxpool.Pool) {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "missing job id", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var queryText, aiResult string
+		var createdAt time.Time
+		err := pool.QueryRow(ctx, `
+			SELECT query_text, ai_result, created_at
+			FROM job_results WHERE job_id = $1
+		`, id).Scan(&queryText, &aiResult, &createdAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"job_id": id,
+				"status": "pending",
+			})
+			return
+		}
+		if err != nil {
+			log.Printf("job lookup %s: %v", id, err)
+			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"job_id":     id,
+			"status":     "completed",
+			"query":      queryText,
+			"result":     aiResult,
+			"created_at": createdAt.UTC().Format(time.RFC3339Nano),
+		})
 	})
 	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))

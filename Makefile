@@ -1,4 +1,4 @@
-.PHONY: tidy build up down logs
+.PHONY: tidy build up down logs demo
 
 tidy:
 	cd go-api && go mod tidy
@@ -17,3 +17,6 @@ down:
 
 logs:
 	docker compose logs -f api consumer python-ai
+
+demo:
+	./scripts/demo.sh

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -21,7 +22,7 @@ type JobPayload struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func processOnce(ctx context.Context, hc *http.Client, aiBase string, p *JobPayload) (reason string, err error) {
+func processOnce(ctx context.Context, hc *http.Client, aiBase string, pool *pgxpool.Pool, p *JobPayload) (reason string, err error) {
 	body, err := json.Marshal(map[string]string{
 		"job_id": p.ID,
 		"query":  p.Query,
@@ -53,6 +54,16 @@ func processOnce(ctx context.Context, hc *http.Client, aiBase string, p *JobPayl
 		return "ai_decode", err
 	}
 
+	_, err = pool.Exec(ctx, `
+		INSERT INTO job_results (job_id, query_text, ai_result)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (job_id) DO UPDATE SET
+			query_text = EXCLUDED.query_text,
+			ai_result = EXCLUDED.ai_result
+	`, p.ID, p.Query, out.Result)
+	if err != nil {
+		return "db_insert", err
+	}
 	return "", nil
 }
 
@@ -61,6 +72,7 @@ func runWorkerLoop(
 	r *kafka.Reader,
 	wRetry, wDLQ *kafka.Writer,
 	aiURL string,
+	pool *pgxpool.Pool,
 	maxRetries, backoffMS int,
 ) {
 	hc := &http.Client{Timeout: 60 * time.Second}
@@ -89,7 +101,7 @@ func runWorkerLoop(
 			time.Sleep(d)
 		}
 
-		reason, perr := processOnce(ctx, hc, aiURL, &payload)
+		reason, perr := processOnce(ctx, hc, aiURL, pool, &payload)
 		if perr == nil {
 			if err := r.CommitMessages(ctx, m); err != nil {
 				log.Printf("commit: %v", err)

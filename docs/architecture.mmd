@@ -1,0 +1,30 @@
+flowchart TB
+  subgraph clients["Clients"]
+    C["HTTP client"]
+  end
+
+  subgraph goapi["go-api"]
+    API["REST: POST /v1/jobs, GET /healthz"]
+  end
+
+  subgraph kafka["Kafka"]
+    J["ai.jobs"]
+    R["ai.jobs.retry"]
+    D["ai.jobs.dlq"]
+  end
+
+  subgraph gocon["go-consumer"]
+    W["Consumer group: ai-workers"]
+  end
+
+  subgraph pyai["python-ai"]
+    P["POST /v1/process"]
+  end
+
+  C -->|enqueue job| API
+  API -->|produce| J
+  J --> W
+  R --> W
+  W -->|invoke| P
+  W -->|lỗi, còn retry| R
+  W -->|hết retry / poison| D

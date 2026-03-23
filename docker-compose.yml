@@ -1,0 +1,99 @@
+services:
+  kafka:
+    image: bitnami/kafka:3.7
+    hostname: kafka
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  kafka-init:
+    image: bitnami/kafka:3.7
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic ai.jobs --partitions 3 --replication-factor 1
+        kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic ai.jobs.retry --partitions 3 --replication-factor 1
+        kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic ai.jobs.dlq --partitions 1 --replication-factor 1
+        echo "Topics ready."
+
+  python-ai:
+    build:
+      context: ./python-ai
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  api:
+    build:
+      context: ./go-api
+      dockerfile: Dockerfile
+    environment:
+      HTTP_ADDR: ":8080"
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_JOBS: ai.jobs
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+  consumer:
+    build:
+      context: ./go-consumer
+      dockerfile: Dockerfile
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_JOBS: ai.jobs
+      KAFKA_TOPIC_RETRY: ai.jobs.retry
+      KAFKA_TOPIC_DLQ: ai.jobs.dlq
+      KAFKA_CONSUMER_GROUP: ai-workers
+      MAX_RETRIES: "5"
+      RETRY_BACKOFF_MS: "2000"
+      AI_SERVICE_URL: http://python-ai:8000
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      python-ai:
+        condition: service_healthy
+
+volumes:
+  kafka_data: {}
